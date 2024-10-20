@@ -1,6 +1,8 @@
 package jpb;
 
 import java.io.File;
+import java.nio.file.Files;
+import java.nio.file.Paths;
 import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.List;
@@ -16,6 +18,7 @@ import com.github.javaparser.TokenRange;
 import com.github.javaparser.ast.CompilationUnit;
 import com.github.javaparser.ast.body.MethodDeclaration;
 import com.github.javaparser.ast.expr.StringLiteralExpr;
+import com.github.javaparser.ast.comments.Comment;
 
 public class JavaParserBuddy {
 
@@ -24,21 +27,21 @@ public class JavaParserBuddy {
         private List<String> tokens;
         private String hash;
 
-        public Method(String signature, List<String> tokens, String hash){
+        public Method(String signature, List<String> tokens, String hash) {
             this.signature = signature;
             this.tokens = tokens;
             this.hash = hash;
         }
 
-        public String getSignature(){
+        public String getSignature() {
             return this.signature;
         }
 
-        public List<String> getTokens(){
+        public List<String> getTokens() {
             return this.tokens;
         }
 
-        public String getHash(){
+        public String getHash() {
             return this.hash;
         }
     }
@@ -46,7 +49,7 @@ public class JavaParserBuddy {
     public static void main(String[] args) {
         if (args.length < 1) {
             System.out.println(
-                    "Please provide a valid option (-get-methods-hash or -convert-method-signature) and the required file path(s).");
+                    "Please provide a valid option (-get-methods-hash, -convert-method-signature, or -get-method) and the required file path(s).");
             return;
         }
 
@@ -73,8 +76,16 @@ public class JavaParserBuddy {
                 new JavaParserBuddy().handleConvertMethodSignature(args[1]);
                 break;
 
+            case "-get-method":
+                if (args.length != 3) {
+                    System.out.println("Please provide a valid file path and method signature for the -get-method option.");
+                    return;
+                }
+                new JavaParserBuddy().handleGetMethod(args[1], args[2]);
+                break;
+
             default:
-                System.out.println("Invalid option. Use -get-methods-hash or -convert-method-signature.");
+                System.out.println("Invalid option. Use -get-methods-hash, -convert-method-signature, or -get-method.");
         }
     }
 
@@ -114,11 +125,19 @@ public class JavaParserBuddy {
         }
     }
 
+    private void handleGetMethod(String filePath, String methodSignature) {
+        try {
+            String javaCode = new String(Files.readAllBytes(Paths.get(filePath)));
+            String result = getMethod(javaCode, methodSignature);
+            System.out.println(result);
+        } catch (Exception e) {
+            System.out.println("Error reading file: " + e.getMessage());
+        }
+    }
+
     private Map<String, String> getMethodsHash(CompilationUnit classUnit) {
         Map<String, String> methods = new HashMap<>();
         classUnit.findAll(MethodDeclaration.class).forEach(method -> {
-            // methodName =
-            // f'{node.type_parameters}-{node.return_type}-{node.name}-{node.parameters}'
             String methodSignature = method.getTypeAsString() + "-" + method.getNameAsString() + "-"
                     + method.getParameters();
 
@@ -138,30 +157,86 @@ public class JavaParserBuddy {
         return methods;
     }
 
-    private String convertedMethodSignature;
-
     private String convertMethodSignature(String methodSignature) {
-        convertedMethodSignature = "";
-        // Extract the full method name
-        String fullMethodName = methodSignature.split("\\(")[0]
-                .split(" ")[methodSignature.split("\\(")[0].split(" ").length - 1];
-        // Just keep the short method name
-        String shortMethodName = fullMethodName.substring(fullMethodName.lastIndexOf('.') + 1);
-        // Replace the full method name with the short method name
-        methodSignature = methodSignature.replace(fullMethodName, shortMethodName);
-        // Check if method signature ends with {}
-        if (!methodSignature.replace("\\s", "").trim().endsWith("{}"))
-            methodSignature += "{}";
-        // Wrap the code in a class
-        String wrappedCode = "public class A { " + methodSignature + " }";
-
-        CompilationUnit cu = StaticJavaParser.parse(wrappedCode);
-        cu.findFirst(MethodDeclaration.class).ifPresent(method -> {
-            convertedMethodSignature = method.getTypeAsString() + "-" + method.getNameAsString() + "-"
-                    + method.getParameters();
-        });
-
-        return convertedMethodSignature;
+        // Remove 'public' or other modifiers if present
+        methodSignature = methodSignature.replaceAll("^(public|private|protected)\\s+", "");
+    
+        // Split the signature into return type and the rest
+        String[] parts = methodSignature.split("\\s+", 2);
+        String returnType = parts[0];
+        String methodNameAndParams = parts.length > 1 ? parts[1] : "";
+    
+        // Handle cases where the method name includes the full package path
+        int openParen = methodNameAndParams.indexOf('(');
+        String methodName = methodNameAndParams.substring(0, openParen);
+        
+        // Extract just the method name without package
+        methodName = methodName.substring(methodName.lastIndexOf('.') + 1);
+    
+        // Extract parameters
+        String params = methodNameAndParams.substring(openParen);
+    
+        // Simplify fully qualified type names in parameters and return type
+        params = simplifyFullyQualifiedNames(params);
+        returnType = simplifyFullyQualifiedNames(returnType);
+    
+        // Remove generic type parameters
+        params = removeGenericParameters(params);
+        returnType = removeGenericParameters(returnType);
+    
+        // Construct the converted signature
+        return returnType + "-" + methodName + "-" + params;
+    }
+    
+    private String simplifyFullyQualifiedNames(String input) {
+        StringBuilder simplified = new StringBuilder();
+        int depth = 0;
+        StringBuilder current = new StringBuilder();
+    
+        for (char c : input.toCharArray()) {
+            if (c == '<') {
+                depth++;
+            } else if (c == '>') {
+                depth--;
+            }
+    
+            if ((c == ',' || c == '(' || c == ')' || c == '>') && depth == 0) {
+                if (current.length() > 0) {
+                    simplified.append(simplifyName(current.toString()));
+                    current = new StringBuilder();
+                }
+                simplified.append(c);
+            } else {
+                current.append(c);
+            }
+        }
+    
+        if (current.length() > 0) {
+            simplified.append(simplifyName(current.toString()));
+        }
+    
+        return simplified.toString();
+    }
+    
+    private String simplifyName(String name) {
+        String trimmed = name.trim();
+        int lastDot = trimmed.lastIndexOf('.');
+        return lastDot != -1 ? trimmed.substring(lastDot + 1) : trimmed;
+    }
+    
+    private String removeGenericParameters(String input) {
+        StringBuilder result = new StringBuilder();
+        int depth = 0;
+        for (char c : input.toCharArray()) {
+            if (c == '<') {
+                depth++;
+            } else if (c == '>') {
+                depth--;
+            } else if (depth == 0) {
+                result.append(c);
+            }
+        }
+        return result.toString();
     }
 
     private String calculateStringHash(String input) {
@@ -184,19 +259,19 @@ public class JavaParserBuddy {
         classUnit.findAll(MethodDeclaration.class).forEach(method -> {
             if (method.getTokenRange().isPresent()) {
                 String methodSignature = method.getTypeAsString() + "-" + method.getNameAsString() + "-"
-                    + method.getParameters();
+                        + method.getParameters();
 
                 TokenRange tokenRange = method.getTokenRange().get();
                 List<String> tokens = new ArrayList<>();
-    
+
                 for (JavaToken token : tokenRange) {
                     if (token.getCategory().isWhitespace()) {
                         continue;
                     }
-                    
+
                     tokens.add(token.getText());
                 }
-    
+
                 methodTokens.put(methodSignature, tokens);
             }
         });
@@ -204,4 +279,33 @@ public class JavaParserBuddy {
         return methodTokens;
     }
 
+    public String getMethod(String javaCode, String methodSignature) {
+        try {
+            CompilationUnit cu = StaticJavaParser.parse(javaCode);
+            
+            String convertedSignature = convertMethodSignature(methodSignature);
+            
+            for (MethodDeclaration method : cu.findAll(MethodDeclaration.class)) {
+                String currentSignature = method.getDeclarationAsString(true, false, false);
+                String convertedCurrentSignature = convertMethodSignature(currentSignature);
+                
+                if (convertedCurrentSignature.equals(convertedSignature)) {
+                    // Remove comments
+                    method.getAllContainedComments().forEach(Comment::remove);
+                    
+                    // Replace string literals
+                    method.walk(StringLiteralExpr.class, s -> s.setString("X"));
+                    
+                    // Get the formatted code
+                    String formattedCode = method.toString();
+                    
+                    return formattedCode;
+                }
+            }
+            
+            return "not-found";
+        } catch (Exception e) {
+            return "error";
+        }
+    }
 }
