@@ -4,8 +4,10 @@ public class MethodSignatureConverter {
 
     public String convertMethodSignature(String methodSignature) {
         methodSignature = methodSignature.trim();
+        methodSignature = methodSignature.replaceAll("^(public|private|protected)\\s+", "");
+        methodSignature = methodSignature.replaceAll("^(final)\\s+", "");
 
-        String[] parts = methodSignature.replaceAll("^(public|private|protected)\\s+", "").split("\\s+", 2);
+        String[] parts = methodSignature.split("\\s+", 2);
         String returnType = parts[0];
         String methodNameAndParams = parts.length > 1 ? parts[1] : "";
 
