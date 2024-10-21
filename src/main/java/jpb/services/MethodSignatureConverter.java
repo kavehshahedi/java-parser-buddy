@@ -7,6 +7,8 @@ public class MethodSignatureConverter {
         methodSignature = methodSignature.replaceAll("^(public|private|protected)\\s+", "");
         methodSignature = methodSignature.replaceAll("^(final)\\s+", "");
 
+        methodSignature = removeGenericParameters(methodSignature);
+
         String[] parts = methodSignature.split("\\s+", 2);
         String returnType = parts[0];
         String methodNameAndParams = parts.length > 1 ? parts[1] : "";
@@ -19,9 +21,6 @@ public class MethodSignatureConverter {
 
         params = simplifyFullyQualifiedNames(params);
         returnType = simplifyFullyQualifiedNames(returnType);
-
-        params = removeGenericParameters(params);
-        returnType = removeGenericParameters(returnType);
 
         return returnType + "-" + methodName + "-" + params;
     }
@@ -55,6 +54,11 @@ public class MethodSignatureConverter {
 
     private String simplifyName(String name) {
         String trimmed = name.trim();
+
+        if (trimmed.endsWith("...")) {
+            return name;
+        }
+
         int lastDot = trimmed.lastIndexOf('.');
         return lastDot != -1 ? trimmed.substring(lastDot + 1) : trimmed;
     }
